@@ -1,5 +1,5 @@
-use numpy::ndarray::Array2;
-use numpy::{IntoPyArray, Ix2, PyArray2};
+use numpy::ndarray::{Array1, Array2};
+use numpy::{IntoPyArray, Ix1, Ix2, PyArray1, PyArray2};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::pyclass;
@@ -10,14 +10,14 @@ fn spiral_scan<'py>(_py: Python<'py>, m: &'py PyModule) -> PyResult<()> {
     m.add_class::<SpiralOrdering>()?;
 
     fn check_proper_size(n: usize, m: usize) -> PyResult<()> {
-        if (u64::try_from(n)? * u64::try_from(m)?) > u64::try_from(i32::MAX)? {
+        if (n as u64 * m as u64) > i32::MAX as u64 {
             return Err(PyValueError::new_err("dimensions too large"));
         }
         Ok(())
     }
 
     #[pyfn(m)]
-    #[pyo3(name = "generate_2d_matrix", signature=(n, m, ordering=SpiralOrdering::TopLeftCW, reversed=false))]
+    #[pyo3(name = "generate_2d_matrix", signature=(n, m, /, ordering=SpiralOrdering::TopLeftCW, *, reversed=false))]
     fn generate_2d_matrix<'py>(
         py: Python<'py>,
         n: usize,
@@ -36,7 +36,7 @@ fn spiral_scan<'py>(_py: Python<'py>, m: &'py PyModule) -> PyResult<()> {
                 k += 1;
             });
         } else {
-            let mut k = i32::try_from(n * m)?;
+            let mut k = (n * m) as i32;
             spiral(n, m, ordering, |i: usize, j: usize| {
                 k -= 1;
                 result[[i, j]].write(k);
@@ -47,30 +47,81 @@ fn spiral_scan<'py>(_py: Python<'py>, m: &'py PyModule) -> PyResult<()> {
     }
 
     #[pyfn(m)]
-    #[pyo3(name = "generate_2d_indices", signature=(n, m, ordering=SpiralOrdering::TopLeftCW, reversed=false))]
+    #[pyo3(name = "generate_2d_indices", signature=(n, m, /, ordering=SpiralOrdering::TopLeftCW, *, reversed=false, transpose=false))]
     fn generate_2d_indices<'py>(
         py: Python<'py>,
         n: usize,
         m: usize,
         ordering: SpiralOrdering,
         reversed: bool,
-    ) -> PyResult<&'py PyArray2<usize>> {
+        transpose: bool,
+    ) -> PyResult<&'py PyArray2<i32>> {
+        check_proper_size(n, m)?;
+        let mut k = if !reversed { 0 as usize } else { n * m };
+
+        let array = if !transpose {
+            let mut tmp = Array2::<i32>::uninit(Ix2(n * m, 2));
+            let mut put = |i: usize, j: usize, k: usize| {
+                tmp[[k, 0]].write(i as i32);
+                tmp[[k, 1]].write(j as i32);
+            };
+            if !reversed {
+                spiral(n, m, ordering, |i: usize, j: usize| {
+                    put(i, j, k);
+                    k += 1;
+                })
+            } else {
+                spiral(n, m, ordering, |i: usize, j: usize| {
+                    k -= 1;
+                    put(i, j, k);
+                })
+            }
+            unsafe { tmp.assume_init() }
+        } else {
+            let mut tmp = Array2::<i32>::uninit(Ix2(2, n * m));
+            let mut put = |i: usize, j: usize, k: usize| {
+                tmp[[0, k]].write(i as i32);
+                tmp[[1, k]].write(j as i32);
+            };
+            if !reversed {
+                spiral(n, m, ordering, |i: usize, j: usize| {
+                    put(i, j, k);
+                    k += 1;
+                })
+            } else {
+                spiral(n, m, ordering, |i: usize, j: usize| {
+                    k -= 1;
+                    put(i, j, k)
+                })
+            }
+            unsafe { tmp.assume_init() }
+        };
+        Ok(array.into_pyarray(py))
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "generate_1d_indices", signature=(n, m, /, ordering=SpiralOrdering::TopLeftCW, *, reversed=false))]
+    fn generate_1d_indices<'py>(
+        py: Python<'py>,
+        n: usize,
+        m: usize,
+        ordering: SpiralOrdering,
+        reversed: bool,
+    ) -> PyResult<&'py PyArray1<i32>> {
         check_proper_size(n, m)?;
 
-        let mut result = Array2::<usize>::uninit(Ix2(n * m, 2));
+        let mut result = Array1::<i32>::uninit(Ix1(n * m));
         if !reversed {
             let mut k = 0usize;
             spiral(n, m, ordering, |i: usize, j: usize| {
-                result[[k, 0]].write(i);
-                result[[k, 1]].write(j);
+                result[k].write(i as i32 * m as i32 + j as i32);
                 k += 1;
             });
         } else {
             let mut k = n * m;
             spiral(n, m, ordering, |i: usize, j: usize| {
                 k -= 1;
-                result[[k, 0]].write(i);
-                result[[k, 1]].write(j);
+                result[k].write(i as i32 * m as i32 + j as i32);
             });
         }
 
@@ -222,16 +273,17 @@ impl SpiralOrdering {
     }
     fn flip_rot(&self) -> SpiralOrdering {
         match self {
-            SpiralOrdering::TopLeftCW       => SpiralOrdering::TopLeftCCW     ,
-            SpiralOrdering::TopRightCW      => SpiralOrdering::TopRightCCW    ,
-            SpiralOrdering::BottomRightCW   => SpiralOrdering::BottomRightCCW ,
-            SpiralOrdering::BottomLeftCW    => SpiralOrdering::BottomLeftCCW  ,
-            SpiralOrdering::TopLeftCCW      => SpiralOrdering::TopLeftCW    ,
-            SpiralOrdering::BottomLeftCCW   => SpiralOrdering::BottomLeftCW ,
-            SpiralOrdering::BottomRightCCW  => SpiralOrdering::BottomRightCW,
-            SpiralOrdering::TopRightCCW     => SpiralOrdering::TopRightCW   ,
+            SpiralOrdering::TopLeftCW       => SpiralOrdering::TopLeftCCW    ,
+            SpiralOrdering::TopRightCW      => SpiralOrdering::TopRightCCW   ,
+            SpiralOrdering::BottomRightCW   => SpiralOrdering::BottomRightCCW,
+            SpiralOrdering::BottomLeftCW    => SpiralOrdering::BottomLeftCCW ,
+            SpiralOrdering::TopLeftCCW      => SpiralOrdering::TopLeftCW     ,
+            SpiralOrdering::BottomLeftCCW   => SpiralOrdering::BottomLeftCW  ,
+            SpiralOrdering::BottomRightCCW  => SpiralOrdering::BottomRightCW ,
+            SpiralOrdering::TopRightCCW     => SpiralOrdering::TopRightCW    ,
         }
     }
+
     fn rotate_cw(&self) -> SpiralOrdering {
         match self {
             SpiralOrdering::TopLeftCW       => SpiralOrdering::TopRightCW    ,
@@ -244,6 +296,7 @@ impl SpiralOrdering {
             SpiralOrdering::TopRightCCW     => SpiralOrdering::BottomRightCCW,
         }
     }
+
     fn rotate_ccw(&self) -> SpiralOrdering {
         match self {
             SpiralOrdering::TopLeftCW       => SpiralOrdering::BottomLeftCW  ,
@@ -257,11 +310,11 @@ impl SpiralOrdering {
         }
     }
     fn rotate_180(&self) -> SpiralOrdering {
-        return self.rotate_cw().rotate_cw();
+        self.rotate_cw().rotate_cw()
     }
 
     fn reverse(&self) -> SpiralOrdering {
-        return self.rotate_180().flip_rot()
+        self.rotate_180().flip_rot()
     }
 
 }
