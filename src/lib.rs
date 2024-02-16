@@ -27,23 +27,24 @@ fn spiral_scan<'py>(_py: Python<'py>, m: &'py PyModule) -> PyResult<()> {
     ) -> PyResult<&'py PyArray2<i32>> {
         check_proper_size(n, m)?;
 
-        let mut result = Array2::<i32>::uninit(Ix2(n, m));
-
+        let mut tmp = Array2::<i32>::uninit(Ix2(n, m));
         if !reversed {
             let mut k = 0i32;
             spiral(n, m, ordering, |i: usize, j: usize| {
-                result[[i, j]].write(k);
+                tmp[[i, j]].write(k);
                 k += 1;
             });
         } else {
             let mut k = (n * m) as i32;
             spiral(n, m, ordering, |i: usize, j: usize| {
                 k -= 1;
-                result[[i, j]].write(k);
+                tmp[[i, j]].write(k);
             });
         }
 
-        unsafe { Ok(result.assume_init().into_pyarray(py)) }
+        let result = unsafe { tmp.assume_init() };
+
+        Ok(result.into_pyarray(py))
     }
 
     #[pyfn(m)]
