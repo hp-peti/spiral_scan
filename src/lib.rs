@@ -1,12 +1,20 @@
 use numpy::ndarray::Array2;
 use numpy::{IntoPyArray, Ix2, PyArray2};
 
+use pyo3::exceptions::PyValueError;
 use pyo3::pyclass;
 use pyo3::{pymethods, pymodule, types::PyModule, PyResult, Python};
 
 #[pymodule]
 fn spiral_scan<'py>(_py: Python<'py>, m: &'py PyModule) -> PyResult<()> {
     m.add_class::<SpiralOrdering>()?;
+
+    fn check_proper_size(n: usize, m: usize) -> PyResult<()> {
+        if (u64::try_from(n)? * u64::try_from(m)?) > u64::try_from(i32::MAX)? {
+            return Err(PyValueError::new_err("dimensions too large"));
+        }
+        Ok(())
+    }
 
     #[pyfn(m)]
     #[pyo3(name = "generate_2d_matrix", signature=(n, m, ordering=SpiralOrdering::TopLeftCW, reversed=false))]
@@ -16,24 +24,26 @@ fn spiral_scan<'py>(_py: Python<'py>, m: &'py PyModule) -> PyResult<()> {
         m: usize,
         ordering: SpiralOrdering,
         reversed: bool,
-    ) -> PyResult<&'py PyArray2<i64>> {
-        let mut result = Array2::<i64>::zeros(Ix2(n, m));
+    ) -> PyResult<&'py PyArray2<i32>> {
+        check_proper_size(n, m)?;
+
+        let mut result = Array2::<i32>::uninit(Ix2(n, m));
 
         if !reversed {
-            let mut k = 0i64;
+            let mut k = 0i32;
             spiral(n, m, ordering, |i: usize, j: usize| {
-                result[[i, j]] = k;
+                result[[i, j]].write(k);
                 k += 1;
             });
         } else {
-            let mut k = i64::try_from(n * m)?;
+            let mut k = i32::try_from(n * m)?;
             spiral(n, m, ordering, |i: usize, j: usize| {
                 k -= 1;
-                result[[i, j]] = k;
+                result[[i, j]].write(k);
             });
         }
 
-        Ok(result.into_pyarray(py))
+        unsafe { Ok(result.assume_init().into_pyarray(py)) }
     }
 
     #[pyfn(m)]
@@ -44,24 +54,27 @@ fn spiral_scan<'py>(_py: Python<'py>, m: &'py PyModule) -> PyResult<()> {
         m: usize,
         ordering: SpiralOrdering,
         reversed: bool,
-    ) -> &'py PyArray2<usize> {
-        let mut result = Array2::<usize>::zeros(Ix2(n * m, 2));
+    ) -> PyResult<&'py PyArray2<usize>> {
+        check_proper_size(n, m)?;
+
+        let mut result = Array2::<usize>::uninit(Ix2(n * m, 2));
         if !reversed {
             let mut k = 0usize;
             spiral(n, m, ordering, |i: usize, j: usize| {
-                result[[k, 0]] = i;
-                result[[k, 1]] = j;
+                result[[k, 0]].write(i);
+                result[[k, 1]].write(j);
                 k += 1;
             });
         } else {
             let mut k = n * m;
             spiral(n, m, ordering, |i: usize, j: usize| {
                 k -= 1;
-                result[[k, 0]] = i;
-                result[[k, 1]] = j;
+                result[[k, 0]].write(i);
+                result[[k, 1]].write(j);
             });
         }
-        result.into_pyarray(py)
+
+        Ok((unsafe { result.assume_init() }).into_pyarray(py))
     }
 
     Ok(())
